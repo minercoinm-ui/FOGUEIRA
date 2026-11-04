@@ -1,0 +1,6 @@
+{
+  "name": "FOGUEIRA - Virtual Farm & Campfire",
+  "description": "Um mundo virtual 3D ambientado em uma fazenda acolhedora com fogueira central, atmosfera nostálgica, exploração em terceira pessoa e interação social.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
