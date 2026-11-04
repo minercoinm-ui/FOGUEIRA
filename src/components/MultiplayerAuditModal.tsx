@@ -110,11 +110,11 @@ export const MultiplayerAuditModal: React.FC<MultiplayerAuditModalProps> = ({
 
             <div className="space-y-2 text-stone-300 text-[11px]">
               <div className="flex items-start space-x-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 mt-1.5 shrink-0"></span>
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 mt-1.5 shrink-0"></span>
                 <div>
-                  <strong className="text-stone-100">1. Servidor de Jogo com Salas (Colyseus ou WebSocket Relay):</strong>
-                  <p className="text-stone-400 mt-0.5">
-                    Criar um servidor Node.js/TypeScript rodando Colyseus Server com a sala <code className="text-amber-300">FogueiraRoom</code>. O servidor transmite a cada tick (ex: 20Hz) a posição <code className="text-stone-300">(x, y, z)</code>, o ângulo de visão (<code className="text-stone-300">yaw</code>), a animação ativa e mensagens de chat.
+                  <strong className="text-emerald-300">1. Servidor de Jogo Colyseus (Estrutura Criada na pasta /server):</strong>
+                  <p className="text-stone-300 mt-0.5">
+                    O servidor Node.js/TypeScript com a sala <code className="text-amber-300">FogueiraRoom</code>, schemas de estado, WebSocket e rota <code className="text-amber-300">/health</code> está 100% pronto na pasta <code className="text-amber-300">server/</code> com configurações para a Railway (<code className="text-stone-300">railway.json</code>, <code className="text-stone-300">Procfile</code>). Basta apontar a Railway para a pasta <code className="text-stone-300">server</code> para colocá-lo no ar e conectar via <code className="text-stone-300">VITE_COLYSEUS_URL</code>.
                   </p>
                 </div>
               </div>
