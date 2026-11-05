@@ -12,10 +12,10 @@ const app = express();
 const port = Number(process.env.PORT) || 2567;
 const host = '0.0.0.0';
 
-// Configuração de CORS aberto para aceitar conexões web em produção
+// Configuração de CORS permissivo para aceitar conexões web de qualquer domínio (Railway, local, Vercel)
 app.use(
   cors({
-    origin: '*',
+    origin: true,
     methods: ['GET', 'POST', 'OPTIONS'],
     credentials: true,
   })

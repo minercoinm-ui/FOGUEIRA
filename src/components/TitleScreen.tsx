@@ -445,20 +445,16 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
       <div className="w-full max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between text-xs text-stone-400 font-sans border-t border-stone-800/80 pt-4 pointer-events-auto">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2 sm:mb-0">
           <span className="text-amber-300 font-medium">Controles:</span>
-          <span><strong className="text-stone-200">WASD</strong> Mover</span>
-          <span>·</span>
-          <span><strong className="text-stone-200">Shift</strong> Correr</span>
-          <span>·</span>
-          <span><strong className="text-stone-200">E</strong> Sentar</span>
-          <span>·</span>
-          <span><strong className="text-stone-200">1..4</strong> Gestos & Dança</span>
-          <span>·</span>
-          <span><strong className="text-stone-200">Mouse</strong> Girar Câmera</span>
+          <span><strong className="text-amber-200">📱 Touch:</strong> Joystick virtual + Botões de Ação</span>
+          <span className="hidden sm:inline">·</span>
+          <span className="hidden sm:inline"><strong className="text-stone-200">💻 Teclado:</strong> WASD / Shift / E / 1..4</span>
+          <span className="hidden sm:inline">·</span>
+          <span><strong className="text-stone-200">Arrastar Tela:</strong> Girar Câmera</span>
         </div>
 
         <div className="flex items-center space-x-2 text-stone-500 text-[11px]">
           <Compass className="w-3.5 h-3.5" />
-          <span>Fogueira v1.1 · WebGL 3D</span>
+          <span>Fogueira v1.2 · Multiplayer 3D Mobile & Desktop</span>
         </div>
       </div>
     </div>

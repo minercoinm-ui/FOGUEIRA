@@ -261,10 +261,10 @@ export const MultiplayerAuditModal: React.FC<MultiplayerAuditModalProps> = ({
               Para conectar o frontend publicado ao seu servidor Colyseus na Railway, adicione a variável de ambiente no painel de publicação do frontend:
             </p>
             <div className="p-2.5 rounded-lg bg-black/60 border border-stone-800 font-mono text-[11px] text-amber-200 select-all">
-              VITE_COLYSEUS_URL=wss://fogueira-production.up.railway.app
+              VITE_COLYSEUS_URL=wss://charismatic-dedication-production-80f4.up.railway.app
             </div>
             <p className="text-[10px] text-stone-400">
-              * O cliente aceita tanto <code className="text-amber-300">wss://fogueira-production.up.railway.app</code> quanto o domínio puro <code className="text-amber-300">fogueira-production.up.railway.app</code>. O código normaliza automaticamente para WebSocket seguro (WSS).
+              * O cliente aceita tanto <code className="text-amber-300">wss://charismatic-dedication-production-80f4.up.railway.app</code> quanto o formato com barra dupla <code className="text-amber-300">//charismatic-dedication-production-80f4.up.railway.app</code> ou direto. O código normaliza automaticamente para WebSocket seguro (WSS).
             </p>
           </div>
 

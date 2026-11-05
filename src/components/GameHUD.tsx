@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { WorldLocation, SitSpot, AvatarAction, GameSettings, ChatMessage } from '../types/game';
 import { ChatBox } from './ChatBox';
+import { MobileControls } from './MobileControls';
 import {
   Flame,
   Mic,
@@ -17,6 +18,7 @@ import {
   Camera,
   Sun,
   Moon,
+  MessageSquare,
 } from 'lucide-react';
 
 import { ConnectionStatus } from '../server/SocketManager';
@@ -42,6 +44,8 @@ interface GameHUDProps {
   onlinePlayersCount?: number;
   onRetryConnection?: () => void;
   serverUrl?: string;
+  onMove?: (move: { forward: number; strafe: number; isSprinting?: boolean }) => void;
+  onJump?: () => void;
 }
 
 export const GameHUD: React.FC<GameHUDProps> = ({
@@ -65,10 +69,34 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   onlinePlayersCount = 1,
   onRetryConnection,
   serverUrl = '',
+  onMove,
+  onJump,
 }) => {
   const [isMicActive, setIsMicActive] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isDockCollapsed, setIsDockCollapsed] = useState(false);
+
+  // Auto-detect mobile touch devices and tablets
+  const [isTouchDevice, setIsTouchDevice] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return (
+      'ontouchstart' in window ||
+      navigator.maxTouchPoints > 0 ||
+      window.innerWidth <= 1024
+    );
+  });
+
+  useEffect(() => {
+    const checkTouch = () => {
+      setIsTouchDevice(
+        'ontouchstart' in window ||
+        navigator.maxTouchPoints > 0 ||
+        window.innerWidth <= 1024
+      );
+    };
+    window.addEventListener('resize', checkTouch);
+    return () => window.removeEventListener('resize', checkTouch);
+  }, []);
 
   const toggleMic = () => {
     setIsMicActive(!isMicActive);
@@ -244,10 +272,23 @@ export const GameHUD: React.FC<GameHUDProps> = ({
         )}
       </div>
 
-      {/* BOTTOM AREA: Chat (Left) + Collapsible Dock (Center) */}
-      <div className="flex flex-col sm:flex-row items-end justify-between w-full gap-4">
-        {/* Bottom-Left: Visual Chat */}
-        <div className="order-2 sm:order-1">
+      {/* Mobile Touch Controls Layer (Virtual Joystick on Left + Touch Actions on Right) */}
+      {isTouchDevice && onMove && onJump && (
+        <MobileControls
+          onMove={onMove}
+          onJump={onJump}
+          onToggleSit={onToggleSit}
+          onTriggerEmote={onTriggerEmote}
+          onToggleCamera={onToggleCamera}
+          isSitting={isSitting}
+          nearbySitSpot={nearbySitSpot}
+        />
+      )}
+
+      {/* BOTTOM AREA: Chat (Left) + Collapsible Dock (Center for Desktop) */}
+      <div className="flex flex-col sm:flex-row items-end justify-between w-full gap-4 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+        {/* Visual Chat (elevated on mobile if joystick is active so they don't collide) */}
+        <div className={`order-2 sm:order-1 ${isTouchDevice ? 'mb-36 sm:mb-0 ml-1' : ''}`}>
           <ChatBox
             messages={chatMessages}
             onSendMessage={onSendMessage}
@@ -256,106 +297,108 @@ export const GameHUD: React.FC<GameHUDProps> = ({
           />
         </div>
 
-        {/* Bottom-Center: Sleek Collapsible Dock (Zero Viewport Occlusion per Three.js skill) */}
-        <div className="order-1 sm:order-2 flex flex-col items-center mx-auto pointer-events-auto">
-          {/* Drawer Collapse / Expand Toggle Button */}
-          <button
-            onClick={() => setIsDockCollapsed(!isDockCollapsed)}
-            className="mb-1.5 px-3 py-1 rounded-full bg-stone-900/90 border border-stone-700/80 text-[11px] font-medium text-stone-300 hover:text-amber-300 flex items-center space-x-1.5 shadow-md cursor-pointer transition-colors"
-          >
-            {isDockCollapsed ? (
-              <>
-                <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
-                <span>Mostrar Ações</span>
-              </>
-            ) : (
-              <>
-                <ChevronDown className="w-3.5 h-3.5 text-amber-400" />
-                <span>Ocultar Dock</span>
-              </>
+        {/* Bottom-Center: Sleek Collapsible Dock for Desktop Mouse/Keyboard players */}
+        {!isTouchDevice && (
+          <div className="order-1 sm:order-2 flex flex-col items-center mx-auto pointer-events-auto">
+            {/* Drawer Collapse / Expand Toggle Button */}
+            <button
+              onClick={() => setIsDockCollapsed(!isDockCollapsed)}
+              className="mb-1.5 px-3 py-1 rounded-full bg-stone-900/90 border border-stone-700/80 text-[11px] font-medium text-stone-300 hover:text-amber-300 flex items-center space-x-1.5 shadow-md cursor-pointer transition-colors"
+            >
+              {isDockCollapsed ? (
+                <>
+                  <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Mostrar Ações</span>
+                </>
+              ) : (
+                <>
+                  <ChevronDown className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Ocultar Dock</span>
+                </>
+              )}
+            </button>
+
+            {/* Action Dock Bar */}
+            {!isDockCollapsed && (
+              <div className="flex items-center space-x-2 bg-stone-950/90 border border-amber-500/25 px-4 py-2.5 rounded-2xl shadow-2xl backdrop-blur-none text-stone-200">
+                {/* Sit / Stand Action */}
+                <button
+                  onClick={onToggleSit}
+                  className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                    isSitting
+                      ? 'bg-amber-500 text-stone-950 border-amber-300 shadow-[0_0_15px_rgba(245,158,11,0.4)]'
+                      : 'bg-stone-900/80 border-stone-700 text-amber-200 hover:bg-stone-800 hover:border-amber-400'
+                  }`}
+                >
+                  <Armchair className="w-4 h-4" />
+                  <span>{isSitting ? 'Levantar [E]' : 'Sentar [E]'}</span>
+                </button>
+
+                {/* Emote 1: Warm Hands */}
+                <button
+                  onClick={() => onTriggerEmote('warmHands')}
+                  title="Aquecer mãos na fogueira [1]"
+                  className="flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-stone-900/80 border border-stone-700 text-stone-300 hover:text-amber-200 hover:border-amber-400 transition-colors cursor-pointer"
+                >
+                  <Flame className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="hidden sm:inline">Aquecer Mãos [1]</span>
+                </button>
+
+                {/* Emote 2: Wave */}
+                <button
+                  onClick={() => onTriggerEmote('wave')}
+                  title="Acenar para amigos [2]"
+                  className="flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-stone-900/80 border border-stone-700 text-stone-300 hover:text-amber-200 hover:border-amber-400 transition-colors cursor-pointer"
+                >
+                  <Hand className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="hidden sm:inline">Acenar [2]</span>
+                </button>
+
+                {/* Emote 3: Talk / Conversar */}
+                <button
+                  onClick={() => onTriggerEmote('talk')}
+                  title="Gesto de Conversa [3]"
+                  className="flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-stone-900/80 border border-stone-700 text-stone-300 hover:text-amber-200 hover:border-amber-400 transition-colors cursor-pointer"
+                >
+                  <span className="text-amber-400 text-sm">💬</span>
+                  <span className="hidden sm:inline">Conversar [3]</span>
+                </button>
+
+                {/* Emote 4: Celebrate / Comemorar */}
+                <button
+                  onClick={() => onTriggerEmote('celebrate')}
+                  title="Comemorar e festejar [4]"
+                  className="flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-stone-900/80 border border-stone-700 text-stone-300 hover:text-amber-200 hover:border-amber-400 transition-colors cursor-pointer"
+                >
+                  <span className="text-amber-400 text-sm">🎉</span>
+                  <span className="hidden sm:inline">Comemorar [4]</span>
+                </button>
+
+                {/* Camera Zoom Toggle */}
+                <button
+                  onClick={onToggleCamera}
+                  title="Alternar Distância da Câmera [C]"
+                  className="flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-stone-900/80 border border-stone-700 text-stone-300 hover:text-amber-200 hover:border-amber-400 transition-colors cursor-pointer"
+                >
+                  <Camera className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="hidden sm:inline">Câmera [C]</span>
+                </button>
+
+                {/* Quick Cycle Atmosphere / Day-Night */}
+                <button
+                  onClick={onCycleTimeOfDay}
+                  title={`Iluminação Atual: ${settings.timeOfDay.toUpperCase()}`}
+                  className="p-2 rounded-xl bg-stone-900/80 border border-stone-700 text-amber-300 hover:border-amber-400 transition-colors cursor-pointer"
+                >
+                  {settings.timeOfDay === 'night' ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
+                </button>
+              </div>
             )}
-          </button>
+          </div>
+        )}
 
-          {/* Action Dock Bar */}
-          {!isDockCollapsed && (
-            <div className="flex items-center space-x-2 bg-stone-950/90 border border-amber-500/25 px-4 py-2.5 rounded-2xl shadow-2xl backdrop-blur-none text-stone-200">
-              {/* Sit / Stand Action */}
-              <button
-                onClick={onToggleSit}
-                className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
-                  isSitting
-                    ? 'bg-amber-500 text-stone-950 border-amber-300 shadow-[0_0_15px_rgba(245,158,11,0.4)]'
-                    : 'bg-stone-900/80 border-stone-700 text-amber-200 hover:bg-stone-800 hover:border-amber-400'
-                }`}
-              >
-                <Armchair className="w-4 h-4" />
-                <span>{isSitting ? 'Levantar [E]' : 'Sentar [E]'}</span>
-              </button>
-
-              {/* Emote 1: Warm Hands */}
-              <button
-                onClick={() => onTriggerEmote('warmHands')}
-                title="Aquecer mãos na fogueira [1]"
-                className="flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-stone-900/80 border border-stone-700 text-stone-300 hover:text-amber-200 hover:border-amber-400 transition-colors cursor-pointer"
-              >
-                <Flame className="w-3.5 h-3.5 text-amber-400" />
-                <span className="hidden sm:inline">Aquecer Mãos [1]</span>
-              </button>
-
-              {/* Emote 2: Wave */}
-              <button
-                onClick={() => onTriggerEmote('wave')}
-                title="Acenar para amigos [2]"
-                className="flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-stone-900/80 border border-stone-700 text-stone-300 hover:text-amber-200 hover:border-amber-400 transition-colors cursor-pointer"
-              >
-                <Hand className="w-3.5 h-3.5 text-amber-400" />
-                <span className="hidden sm:inline">Acenar [2]</span>
-              </button>
-
-              {/* Emote 3: Talk / Conversar */}
-              <button
-                onClick={() => onTriggerEmote('talk')}
-                title="Gesto de Conversa [3]"
-                className="flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-stone-900/80 border border-stone-700 text-stone-300 hover:text-amber-200 hover:border-amber-400 transition-colors cursor-pointer"
-              >
-                <span className="text-amber-400 text-sm">💬</span>
-                <span className="hidden sm:inline">Conversar [3]</span>
-              </button>
-
-              {/* Emote 4: Celebrate / Comemorar */}
-              <button
-                onClick={() => onTriggerEmote('celebrate')}
-                title="Comemorar e festejar [4]"
-                className="flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-stone-900/80 border border-stone-700 text-stone-300 hover:text-amber-200 hover:border-amber-400 transition-colors cursor-pointer"
-              >
-                <span className="text-amber-400 text-sm">🎉</span>
-                <span className="hidden sm:inline">Comemorar [4]</span>
-              </button>
-
-              {/* Camera Zoom Toggle */}
-              <button
-                onClick={onToggleCamera}
-                title="Alternar Distância da Câmera [C]"
-                className="flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-stone-900/80 border border-stone-700 text-stone-300 hover:text-amber-200 hover:border-amber-400 transition-colors cursor-pointer"
-              >
-                <Camera className="w-3.5 h-3.5 text-amber-400" />
-                <span className="hidden sm:inline">Câmera [C]</span>
-              </button>
-
-              {/* Quick Cycle Atmosphere / Day-Night */}
-              <button
-                onClick={onCycleTimeOfDay}
-                title={`Iluminação Atual: ${settings.timeOfDay.toUpperCase()}`}
-                className="p-2 rounded-xl bg-stone-900/80 border border-stone-700 text-amber-300 hover:border-amber-400 transition-colors cursor-pointer"
-              >
-                {settings.timeOfDay === 'night' ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Empty placeholder for grid balance */}
-        <div className="w-24 hidden sm:block order-3"></div>
+        {/* Empty placeholder for grid balance on desktop */}
+        {!isTouchDevice && <div className="w-24 hidden sm:block order-3"></div>}
       </div>
     </div>
   );

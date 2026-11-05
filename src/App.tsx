@@ -239,12 +239,26 @@ export default function App() {
     setIsMuted(muted);
   };
 
+  // Mobile virtual joystick movement handler
+  const handleMobileMove = (move: { forward: number; strafe: number; isSprinting?: boolean }) => {
+    if (worldRef.current) {
+      worldRef.current.setTouchMove(move.forward, move.strafe, move.isSprinting);
+    }
+  };
+
+  // Mobile jump / hop handler
+  const handleJump = () => {
+    if (worldRef.current) {
+      worldRef.current.jump();
+    }
+  };
+
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-black select-none">
+    <div className="relative w-screen h-screen overflow-hidden bg-black select-none touch-none">
       {/* 3D WebGL Canvas Viewport (Isolated container - never re-rendered by React) */}
       <div
         ref={canvasMountRef}
-        className="absolute inset-0 w-full h-full z-0 cursor-grab active:cursor-grabbing"
+        className="absolute inset-0 w-full h-full z-0 cursor-grab active:cursor-grabbing touch-none"
       />
 
       {/* Title Screen Overlay */}
@@ -282,6 +296,8 @@ export default function App() {
           onlinePlayersCount={1 + remotePlayersCount}
           onRetryConnection={handleRetryConnection}
           serverUrl={socketManager.getServerUrl()}
+          onMove={handleMobileMove}
+          onJump={handleJump}
         />
       )}
 

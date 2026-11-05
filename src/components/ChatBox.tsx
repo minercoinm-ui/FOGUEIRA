@@ -65,7 +65,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
       {/* Main Chat Box Panel */}
       {isOpen && (
-        <div className="w-80 sm:w-96 bg-stone-950/95 border border-amber-500/30 rounded-2xl shadow-2xl flex flex-col overflow-hidden text-stone-200 text-xs">
+        <div className="w-[calc(100vw-2rem)] sm:w-96 max-w-sm bg-stone-950/95 border border-amber-500/30 rounded-2xl shadow-2xl flex flex-col overflow-hidden text-stone-200 text-xs backdrop-blur-md">
           {/* Header */}
           <div className="px-4 py-2.5 bg-stone-900/80 border-b border-stone-800 flex items-center justify-between">
             <div className="flex items-center space-x-2">
@@ -76,20 +76,20 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
             </div>
             <button
               onClick={onToggle}
-              className="text-stone-400 hover:text-stone-100 text-xs px-2 py-0.5 rounded cursor-pointer"
+              className="text-stone-400 hover:text-stone-100 text-xs px-2.5 py-1 rounded bg-stone-800/60 hover:bg-stone-800 cursor-pointer"
             >
-              ✕
+              ✕ Fechar
             </button>
           </div>
 
           {/* Quick Preset Phrases */}
-          <div className="px-3 py-2 bg-stone-900/40 border-b border-stone-800/60 flex items-center space-x-1.5 overflow-x-auto scrollbar-none">
+          <div className="px-3 py-2 bg-stone-900/40 border-b border-stone-800/60 flex items-center space-x-1.5 overflow-x-auto scrollbar-none touch-pan-x">
             <Sparkles className="w-3 h-3 text-amber-400 shrink-0 mr-1" />
             {PRESET_PHRASES.map((phrase) => (
               <button
                 key={phrase}
                 onClick={() => handlePresetClick(phrase)}
-                className="shrink-0 text-[11px] px-2.5 py-1 rounded-full bg-stone-800/80 hover:bg-amber-500/20 hover:text-amber-200 border border-stone-700/60 transition-colors cursor-pointer text-stone-300"
+                className="shrink-0 text-[11px] px-2.5 py-1 rounded-full bg-stone-800/80 hover:bg-amber-500/20 hover:text-amber-200 border border-stone-700/60 transition-colors cursor-pointer text-stone-300 active:scale-95"
               >
                 {phrase}
               </button>
@@ -97,7 +97,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
           </div>
 
           {/* Message Feed */}
-          <div className="p-3 h-48 overflow-y-auto space-y-2.5 scrollbar-thin scrollbar-thumb-stone-800">
+          <div className="p-3 h-40 sm:h-48 overflow-y-auto space-y-2.5 scrollbar-thin scrollbar-thumb-stone-800">
             {messages.length === 0 && (
               <div className="h-full flex items-center justify-center text-stone-500 text-center text-xs">
                 Aproxime-se da fogueira e diga um olá!

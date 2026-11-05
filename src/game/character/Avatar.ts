@@ -27,6 +27,11 @@ export class Avatar {
   private blinkTimer = 0;
   private isBlinking = false;
 
+  // 3D Billboard Name Tag
+  private nameTagMesh: THREE.Mesh | null = null;
+  private nameCanvas: HTMLCanvasElement;
+  private nameTexture: THREE.CanvasTexture;
+
   // Speech Bubble Billboard
   private speechBubbleMesh: THREE.Mesh | null = null;
   private speechCanvas: HTMLCanvasElement;
@@ -47,6 +52,12 @@ export class Avatar {
     this.group = new THREE.Group();
     this.group.name = 'PlayerAvatar';
 
+    // Name tag setup
+    this.nameCanvas = document.createElement('canvas');
+    this.nameCanvas.width = 256;
+    this.nameCanvas.height = 64;
+    this.nameTexture = new THREE.CanvasTexture(this.nameCanvas);
+
     // Speech bubble setup
     this.speechCanvas = document.createElement('canvas');
     this.speechCanvas.width = 512;
@@ -54,6 +65,7 @@ export class Avatar {
     this.speechTexture = new THREE.CanvasTexture(this.speechCanvas);
 
     this.buildCharacterMesh();
+    this.buildNameTag();
     this.buildSpeechBubble();
   }
 
@@ -614,6 +626,52 @@ export class Avatar {
   }
 
   /**
+   * Floating 3D billboard name tag badge above avatar
+   */
+  private buildNameTag(): void {
+    const ctx = this.nameCanvas.getContext('2d')!;
+    ctx.clearRect(0, 0, 256, 64);
+
+    // Warm rustic badge background with gold border
+    ctx.fillStyle = 'rgba(16, 12, 9, 0.88)';
+    ctx.strokeStyle = '#d4af37';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.roundRect(8, 8, 240, 48, 24);
+    ctx.fill();
+    ctx.stroke();
+
+    // Small glowing amber presence dot
+    ctx.fillStyle = '#f59e0b';
+    ctx.beginPath();
+    ctx.arc(32, 32, 5.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Name typography
+    ctx.fillStyle = '#fffdf7';
+    ctx.font = 'bold 20px "Plus Jakarta Sans", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const nameStr = this.customization.name || 'Viajante';
+    const displayName = nameStr.length > 15 ? nameStr.substring(0, 14) + '…' : nameStr;
+    ctx.fillText(displayName, 138, 32);
+
+    this.nameTexture.needsUpdate = true;
+
+    const tagGeo = new THREE.PlaneGeometry(1.5, 0.38);
+    const tagMat = new THREE.MeshBasicMaterial({
+      map: this.nameTexture,
+      transparent: true,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+
+    this.nameTagMesh = new THREE.Mesh(tagGeo, tagMat);
+    this.nameTagMesh.position.set(0, 2.05, 0);
+    this.group.add(this.nameTagMesh);
+  }
+
+  /**
    * Floating 3D billboard speech bubble above avatar
    */
   private buildSpeechBubble(): void {
@@ -626,7 +684,7 @@ export class Avatar {
     });
 
     this.speechBubbleMesh = new THREE.Mesh(bubbleGeo, bubbleMat);
-    this.speechBubbleMesh.position.set(0, 2.35, 0);
+    this.speechBubbleMesh.position.set(0, 2.50, 0);
     this.speechBubbleMesh.visible = false;
     this.group.add(this.speechBubbleMesh);
   }
@@ -683,6 +741,7 @@ export class Avatar {
       this.group.remove(this.group.children[0]);
     }
     this.buildCharacterMesh();
+    this.buildNameTag();
     this.buildSpeechBubble();
   }
 
@@ -706,9 +765,14 @@ export class Avatar {
   public update(delta: number, isMoving: boolean, isSprinting: boolean, cameraObj?: THREE.Camera): void {
     this.animTime += delta;
 
-    // Face speech bubble toward active camera
-    if (this.speechBubbleMesh && this.speechBubbleMesh.visible && cameraObj) {
-      this.speechBubbleMesh.quaternion.copy(cameraObj.quaternion);
+    // Face billboards toward active camera
+    if (cameraObj) {
+      if (this.nameTagMesh) {
+        this.nameTagMesh.quaternion.copy(cameraObj.quaternion);
+      }
+      if (this.speechBubbleMesh && this.speechBubbleMesh.visible) {
+        this.speechBubbleMesh.quaternion.copy(cameraObj.quaternion);
+      }
     }
 
     // Natural eye blinking animation

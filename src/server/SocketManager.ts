@@ -33,7 +33,7 @@ export type StatusChangeCallback = (status: ConnectionStatus, errorMsg?: string,
  * into a valid Colyseus WebSocket URI.
  */
 export function normalizeColyseusUrl(rawUrl?: string): string {
-  const DEFAULT_PROD_URL = 'wss://fogueira-production.up.railway.app';
+  const DEFAULT_PROD_URL = 'wss://charismatic-dedication-production-80f4.up.railway.app';
 
   if (!rawUrl || typeof rawUrl !== 'string') {
     return DEFAULT_PROD_URL;
@@ -42,6 +42,11 @@ export function normalizeColyseusUrl(rawUrl?: string): string {
   let clean = rawUrl.trim();
   // Strip trailing slashes
   clean = clean.replace(/\/+$/, '');
+
+  // Strip protocol-relative "//" prefix (e.g. "//charismatic-dedication-production-80f4.up.railway.app")
+  if (clean.startsWith('//')) {
+    clean = clean.replace(/^\/\//, '');
+  }
 
   if (!clean) {
     return DEFAULT_PROD_URL;
@@ -53,7 +58,7 @@ export function normalizeColyseusUrl(rawUrl?: string): string {
   } else if (clean.startsWith('http://')) {
     clean = clean.replace(/^http:\/\//, 'ws://');
   } else if (!clean.startsWith('ws://') && !clean.startsWith('wss://')) {
-    // Bare hostname provided (e.g. "fogueira-production.up.railway.app")
+    // Bare hostname provided (e.g. "charismatic-dedication-production-80f4.up.railway.app")
     if (clean.includes('localhost') || clean.includes('127.0.0.1')) {
       clean = `ws://${clean}`;
     } else {
@@ -205,8 +210,9 @@ export class SocketManager {
       this.setStatus('error', msg);
     });
 
-    // 1. Schema listeners: listen for player add/remove directly on state.players MapSchema
+    // 1. Process any players that already exist in initial room state
     if (this.room.state) {
+      this.syncInitialPlayers(this.room.state);
       this.setupStateSchemaListeners(this.room.state);
     }
 
@@ -219,87 +225,19 @@ export class SocketManager {
 
       const currentIds = new Set<string>();
 
-      const handlePlayerRecord = (sessionId: string, pData: unknown) => {
-        if (sessionId === this.sessionId) return; // Skip local player
+      const processPlayer = (sessionId: string, pData: unknown) => {
+        if (sessionId === this.sessionId) return;
         currentIds.add(sessionId);
-
-        const data = (pData || {}) as Partial<PlayerNetworkState>;
-        if (!this.remotePlayers.has(sessionId)) {
-          // New remote player joined
-          const newPlayer: PlayerNetworkState = {
-            sessionId,
-            name: data.name || 'Viajante',
-            customization: data.customization || {
-              name: data.name || 'Viajante',
-              gender: 'male',
-              skinTone: '#d8a679',
-              hairStyle: 'short_part',
-              hairColor: '#362312',
-              shirtStyle: 'flannel_red',
-              shirtColor: '#b83a2b',
-              pantsStyle: 'jeans_classic',
-              pantsColor: '#2b3f60',
-              hatType: 'straw',
-            },
-            x: data.x ?? 0,
-            y: data.y ?? 0,
-            z: data.z ?? 4.8,
-            rotationY: data.rotationY ?? Math.PI,
-            action: (data.action as AvatarAction) ?? 'idle',
-            isSitting: Boolean(data.isSitting),
-            sitSpotId: data.sitSpotId,
-            lastUpdated: Date.now(),
-          };
-
-          this.remotePlayers.set(sessionId, newPlayer);
-          this.notifyPlayerJoin(newPlayer);
-        } else {
-          // Existing remote player updated
-          const existing = this.remotePlayers.get(sessionId)!;
-          let changed = false;
-
-          if (data.x !== undefined && data.x !== existing.x) {
-            existing.x = data.x;
-            changed = true;
-          }
-          if (data.y !== undefined && data.y !== existing.y) {
-            existing.y = data.y;
-            changed = true;
-          }
-          if (data.z !== undefined && data.z !== existing.z) {
-            existing.z = data.z;
-            changed = true;
-          }
-          if (data.rotationY !== undefined && data.rotationY !== existing.rotationY) {
-            existing.rotationY = data.rotationY;
-            changed = true;
-          }
-          if (data.action !== undefined && data.action !== existing.action) {
-            existing.action = data.action as AvatarAction;
-            changed = true;
-          }
-          if (data.isSitting !== undefined && data.isSitting !== existing.isSitting) {
-            existing.isSitting = data.isSitting;
-            changed = true;
-          }
-          if (data.sitSpotId !== undefined) {
-            existing.sitSpotId = data.sitSpotId;
-          }
-
-          if (changed) {
-            existing.lastUpdated = Date.now();
-            this.notifyPlayerUpdate(sessionId, existing);
-          }
-        }
+        this.handlePlayerJoinOrUpdate(sessionId, pData);
       };
 
       if (typeof typedState.players.forEach === 'function') {
         typedState.players.forEach((pData: unknown, sessionId: string) => {
-          handlePlayerRecord(sessionId, pData);
+          processPlayer(sessionId, pData);
         });
       } else {
         Object.entries(typedState.players as Record<string, unknown>).forEach(([sessionId, pData]) => {
-          handlePlayerRecord(sessionId, pData);
+          processPlayer(sessionId, pData);
         });
       }
 
@@ -321,30 +259,36 @@ export class SocketManager {
     // Direct player movement packet (for high frequency interpolation)
     this.room.onMessage('player_move', (data: { sessionId: string } & Partial<PlayerNetworkState>) => {
       if (data.sessionId && data.sessionId !== this.sessionId) {
-        const p = this.remotePlayers.get(data.sessionId);
-        if (p) {
-          if (data.x !== undefined) p.x = data.x;
-          if (data.y !== undefined) p.y = data.y;
-          if (data.z !== undefined) p.z = data.z;
-          if (data.rotationY !== undefined) p.rotationY = data.rotationY;
-          if (data.action !== undefined) p.action = data.action;
-          if (data.isSitting !== undefined) p.isSitting = data.isSitting;
-          if (data.sitSpotId !== undefined) p.sitSpotId = data.sitSpotId;
-          p.lastUpdated = Date.now();
-          this.notifyPlayerUpdate(data.sessionId, p);
+        let p = this.remotePlayers.get(data.sessionId);
+        if (!p) {
+          // If player_move arrived before state patch, register player immediately
+          p = this.handlePlayerJoinOrUpdate(data.sessionId, data) ?? undefined;
+          if (!p) return;
         }
+
+        if (data.x !== undefined) p.x = data.x;
+        if (data.y !== undefined) p.y = data.y;
+        if (data.z !== undefined) p.z = data.z;
+        if (data.rotationY !== undefined) p.rotationY = data.rotationY;
+        if (data.action !== undefined) p.action = data.action;
+        if (data.isSitting !== undefined) p.isSitting = data.isSitting;
+        if (data.sitSpotId !== undefined) p.sitSpotId = data.sitSpotId;
+        p.lastUpdated = Date.now();
+        this.notifyPlayerUpdate(data.sessionId, p);
       }
     });
 
     // Emote broadcast
     this.room.onMessage('player_emote', (data: { sessionId: string; action: AvatarAction }) => {
       if (data.sessionId && data.sessionId !== this.sessionId) {
-        const p = this.remotePlayers.get(data.sessionId);
-        if (p) {
-          p.action = data.action;
-          p.lastUpdated = Date.now();
-          this.notifyPlayerUpdate(data.sessionId, { action: data.action });
+        let p = this.remotePlayers.get(data.sessionId);
+        if (!p) {
+          p = this.handlePlayerJoinOrUpdate(data.sessionId, { action: data.action }) ?? undefined;
+          if (!p) return;
         }
+        p.action = data.action;
+        p.lastUpdated = Date.now();
+        this.notifyPlayerUpdate(data.sessionId, { action: data.action });
       }
     });
 
@@ -355,6 +299,111 @@ export class SocketManager {
         this.notifyStatusChange();
       }
     });
+  }
+
+  /**
+   * Unifies player creation and updating to guarantee no duplicate joins or missed players.
+   */
+  public handlePlayerJoinOrUpdate(sessionId: string, pData: unknown): PlayerNetworkState | null {
+    if (sessionId === this.sessionId) return null; // Never register local player as remote
+
+    const data = (pData || {}) as Partial<PlayerNetworkState>;
+    if (!this.remotePlayers.has(sessionId)) {
+      const newPlayer: PlayerNetworkState = {
+        sessionId,
+        name: data.name || 'Viajante',
+        customization: data.customization || {
+          name: data.name || 'Viajante',
+          gender: 'male',
+          skinTone: '#d8a679',
+          hairStyle: 'short_part',
+          hairColor: '#362312',
+          shirtStyle: 'flannel_red',
+          shirtColor: '#b83a2b',
+          pantsStyle: 'jeans_classic',
+          pantsColor: '#2b3f60',
+          hatType: 'straw',
+        },
+        x: data.x ?? 0,
+        y: data.y ?? 0,
+        z: data.z ?? 4.8,
+        rotationY: data.rotationY ?? Math.PI,
+        action: (data.action as AvatarAction) ?? 'idle',
+        isSitting: Boolean(data.isSitting),
+        sitSpotId: data.sitSpotId,
+        lastUpdated: Date.now(),
+      };
+
+      this.remotePlayers.set(sessionId, newPlayer);
+      this.notifyPlayerJoin(newPlayer);
+      return newPlayer;
+    } else {
+      const existing = this.remotePlayers.get(sessionId)!;
+      let changed = false;
+
+      if (data.name && data.name !== existing.name) {
+        existing.name = data.name;
+        changed = true;
+      }
+      if (data.customization) {
+        existing.customization = { ...existing.customization, ...data.customization };
+        changed = true;
+      }
+      if (data.x !== undefined && data.x !== existing.x) {
+        existing.x = data.x;
+        changed = true;
+      }
+      if (data.y !== undefined && data.y !== existing.y) {
+        existing.y = data.y;
+        changed = true;
+      }
+      if (data.z !== undefined && data.z !== existing.z) {
+        existing.z = data.z;
+        changed = true;
+      }
+      if (data.rotationY !== undefined && data.rotationY !== existing.rotationY) {
+        existing.rotationY = data.rotationY;
+        changed = true;
+      }
+      if (data.action !== undefined && data.action !== existing.action) {
+        existing.action = data.action as AvatarAction;
+        changed = true;
+      }
+      if (data.isSitting !== undefined && data.isSitting !== existing.isSitting) {
+        existing.isSitting = data.isSitting;
+        changed = true;
+      }
+      if (data.sitSpotId !== undefined) {
+        existing.sitSpotId = data.sitSpotId;
+      }
+
+      if (changed) {
+        existing.lastUpdated = Date.now();
+        this.notifyPlayerUpdate(sessionId, existing);
+      }
+      return existing;
+    }
+  }
+
+  private syncInitialPlayers(state: unknown): void {
+    const s = state as {
+      players?: { forEach?: (cb: (player: unknown, sessionId: string) => void) => void } | Record<string, unknown>;
+    };
+    if (!s?.players) return;
+
+    if (typeof s.players.forEach === 'function') {
+      s.players.forEach((pData: unknown, sessionId: string) => {
+        if (sessionId !== this.sessionId) {
+          this.handlePlayerJoinOrUpdate(sessionId, pData);
+        }
+      });
+    } else if (typeof s.players === 'object') {
+      Object.entries(s.players as Record<string, unknown>).forEach(([sessionId, pData]) => {
+        if (sessionId !== this.sessionId) {
+          this.handlePlayerJoinOrUpdate(sessionId, pData);
+        }
+      });
+    }
   }
 
   private setupStateSchemaListeners(state: unknown): void {
@@ -368,33 +417,7 @@ export class SocketManager {
     if (s.players && typeof s.players.onAdd === 'function') {
       s.players.onAdd((playerData, sessionId) => {
         if (sessionId === this.sessionId) return;
-        const p = playerData as Partial<PlayerNetworkState>;
-        const newPlayer: PlayerNetworkState = {
-          sessionId,
-          name: p.name || 'Viajante',
-          customization: p.customization || {
-            name: p.name || 'Viajante',
-            gender: 'male',
-            skinTone: '#d8a679',
-            hairStyle: 'short_part',
-            hairColor: '#362312',
-            shirtStyle: 'flannel_red',
-            shirtColor: '#b83a2b',
-            pantsStyle: 'jeans_classic',
-            pantsColor: '#2b3f60',
-            hatType: 'straw',
-          },
-          x: p.x ?? 0,
-          y: p.y ?? 0,
-          z: p.z ?? 4.8,
-          rotationY: p.rotationY ?? Math.PI,
-          action: (p.action as AvatarAction) ?? 'idle',
-          isSitting: Boolean(p.isSitting),
-          sitSpotId: p.sitSpotId,
-          lastUpdated: Date.now(),
-        };
-        this.remotePlayers.set(sessionId, newPlayer);
-        this.notifyPlayerJoin(newPlayer);
+        this.handlePlayerJoinOrUpdate(sessionId, playerData);
       });
     }
 

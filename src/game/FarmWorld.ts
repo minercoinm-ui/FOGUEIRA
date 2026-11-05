@@ -69,6 +69,7 @@ export class FarmWorld {
 
   // Active inputs
   private keys: Record<string, boolean> = {};
+  private touchMove = { forward: 0, strafe: 0, isSprinting: false };
 
   // World Status / Callbacks
   public gameState: GameState = 'TITLE';
@@ -126,6 +127,11 @@ export class FarmWorld {
     });
 
     this.socketUnsubscribers.push(unsubJoin, unsubUpdate, unsubLeave);
+
+    // Sync any pre-existing players that were already in the room
+    socketManager.remotePlayers.forEach((player) => {
+      this.addRemotePlayer(player);
+    });
   }
 
   private initThree(): void {
@@ -262,6 +268,81 @@ export class FarmWorld {
         this.cameraPitch = Math.max(-0.25, Math.min(1.15, this.cameraPitch + deltaY * sensitivity));
       }
     });
+
+    // Touch drag / look & pinch-to-zoom for mobile / tablet devices
+    let touchLookId: number | null = null;
+    let lastTouchX = 0;
+    let lastTouchY = 0;
+    let initialPinchDistance = 0;
+
+    canvas.addEventListener(
+      'touchstart',
+      (e: TouchEvent) => {
+        if (e.touches.length === 1) {
+          touchLookId = e.touches[0].identifier;
+          lastTouchX = e.touches[0].clientX;
+          lastTouchY = e.touches[0].clientY;
+        } else if (e.touches.length === 2) {
+          const dx = e.touches[0].clientX - e.touches[1].clientX;
+          const dy = e.touches[0].clientY - e.touches[1].clientY;
+          initialPinchDistance = Math.hypot(dx, dy);
+        }
+      },
+      { passive: false }
+    );
+
+    canvas.addEventListener(
+      'touchmove',
+      (e: TouchEvent) => {
+        if (e.touches.length === 1 && touchLookId !== null) {
+          for (let i = 0; i < e.touches.length; i++) {
+            const t = e.touches[i];
+            if (t.identifier === touchLookId) {
+              e.preventDefault();
+              const deltaX = t.clientX - lastTouchX;
+              const deltaY = t.clientY - lastTouchY;
+              lastTouchX = t.clientX;
+              lastTouchY = t.clientY;
+              this.rotateCameraTouch(deltaX, deltaY);
+              break;
+            }
+          }
+        } else if (e.touches.length === 2 && initialPinchDistance > 0) {
+          e.preventDefault();
+          const dx = e.touches[0].clientX - e.touches[1].clientX;
+          const dy = e.touches[0].clientY - e.touches[1].clientY;
+          const currentPinchDistance = Math.hypot(dx, dy);
+          const pinchDelta = currentPinchDistance - initialPinchDistance;
+          initialPinchDistance = currentPinchDistance;
+          this.targetCameraDistance = Math.max(
+            2.2,
+            Math.min(8.0, this.targetCameraDistance - pinchDelta * 0.015)
+          );
+        }
+      },
+      { passive: false }
+    );
+
+    const endTouchLook = (e: TouchEvent) => {
+      if (touchLookId !== null) {
+        let found = false;
+        for (let i = 0; i < e.touches.length; i++) {
+          if (e.touches[i].identifier === touchLookId) {
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          touchLookId = null;
+        }
+      }
+      if (e.touches.length < 2) {
+        initialPinchDistance = 0;
+      }
+    };
+
+    canvas.addEventListener('touchend', endTouchLook);
+    canvas.addEventListener('touchcancel', endTouchLook);
 
     // Mouse wheel zoom
     canvas.addEventListener('wheel', (e) => {
@@ -406,9 +487,46 @@ export class FarmWorld {
     socketManager.sendChatMessage(text, this.player.customization.name);
   }
 
+  public setTouchMove(forward: number, strafe: number, isSprinting = false): void {
+    this.touchMove.forward = forward;
+    this.touchMove.strafe = strafe;
+    this.touchMove.isSprinting = isSprinting;
+
+    // Se estiver sentado e mover o joystick, levanta automaticamente
+    if (this.isSitting && (Math.abs(forward) > 0.15 || Math.abs(strafe) > 0.15)) {
+      this.toggleSitInteract();
+    }
+  }
+
+  public rotateCameraTouch(deltaX: number, deltaY: number): void {
+    const sensitivity = 0.0035 * this.settings.mouseSensitivity;
+    this.cameraYaw -= deltaX * sensitivity;
+    this.cameraPitch = Math.max(-0.25, Math.min(1.15, this.cameraPitch + deltaY * sensitivity));
+  }
+
+  public jump(): void {
+    if (this.isSitting) {
+      this.toggleSitInteract();
+      return;
+    }
+    if (this.player.action === 'idle' || this.player.action === 'walk' || this.player.action === 'run') {
+      this.player.setAction('celebrate');
+      setTimeout(() => {
+        if (this.player.action === 'celebrate') {
+          this.player.setAction('idle');
+        }
+      }, 700);
+    }
+  }
+
   // Remote players lifecycle
   public addRemotePlayer(player: PlayerNetworkState): void {
-    if (this.remoteAvatars.has(player.sessionId)) return;
+    if (player.sessionId === socketManager.sessionId) return;
+
+    if (this.remoteAvatars.has(player.sessionId)) {
+      this.updateRemotePlayer(player.sessionId, player);
+      return;
+    }
 
     const avatar = new Avatar(player.customization);
     avatar.group.position.set(player.x, player.y, player.z);
@@ -429,10 +547,28 @@ export class FarmWorld {
   }
 
   public updateRemotePlayer(sessionId: string, state: Partial<PlayerNetworkState>): void {
-    const item = this.remoteAvatars.get(sessionId);
+    let item = this.remoteAvatars.get(sessionId);
+    if (!item) {
+      const existing = socketManager.remotePlayers.get(sessionId);
+      if (existing) {
+        this.addRemotePlayer(existing);
+        item = this.remoteAvatars.get(sessionId);
+      }
+    }
     if (!item) return;
 
+    if (state.customization) {
+      item.avatar.updateCustomization(state.customization);
+    }
+
     if (state.x !== undefined && state.z !== undefined) {
+      const curX = item.avatar.group.position.x;
+      const curZ = item.avatar.group.position.z;
+      const dist = Math.hypot(state.x - curX, state.z - curZ);
+      // Snap position if avatar just spawned or jumped a large distance
+      if (dist > 12) {
+        item.avatar.group.position.set(state.x, state.y ?? item.targetPos.y, state.z);
+      }
       item.targetPos.set(state.x, state.y ?? item.targetPos.y, state.z);
     }
     if (state.rotationY !== undefined) {
@@ -499,7 +635,7 @@ export class FarmWorld {
       return false;
     }
 
-    // Se estiver sentado, verifica se alguma tecla de movimento foi acionada
+    // Se estiver sentado, verifica se alguma tecla de movimento ou joystick foi acionado
     if (this.isSitting) {
       const anyMoveKey =
         this.keys['w'] ||
@@ -509,7 +645,9 @@ export class FarmWorld {
         this.keys['a'] ||
         this.keys['arrowleft'] ||
         this.keys['d'] ||
-        this.keys['arrowright'];
+        this.keys['arrowright'] ||
+        Math.abs(this.touchMove.forward) > 0.15 ||
+        Math.abs(this.touchMove.strafe) > 0.15;
 
       if (anyMoveKey) {
         this.toggleSitInteract();
@@ -518,22 +656,26 @@ export class FarmWorld {
       }
     }
 
-    let forward = 0;
-    let strafe = 0;
+    let forward = this.touchMove.forward;
+    let strafe = this.touchMove.strafe;
 
     if (this.keys['w'] || this.keys['arrowup']) forward += 1;
     if (this.keys['s'] || this.keys['arrowdown']) forward -= 1;
     if (this.keys['a'] || this.keys['arrowleft']) strafe -= 1;
     if (this.keys['d'] || this.keys['arrowright']) strafe += 1;
 
-    const isMoving = forward !== 0 || strafe !== 0;
+    // Clamp strafe & forward
+    forward = Math.max(-1, Math.min(1, forward));
+    strafe = Math.max(-1, Math.min(1, strafe));
+
+    const isMoving = Math.abs(forward) > 0.05 || Math.abs(strafe) > 0.05;
 
     if (!isMoving) {
       this.playerVelocity.set(0, 0, 0);
       return false;
     }
 
-    const isSprinting = Boolean(this.keys['shift']);
+    const isSprinting = Boolean(this.keys['shift']) || this.touchMove.isSprinting;
     const speed = isSprinting ? this.sprintSpeed : this.walkSpeed;
 
     // Movement relative to camera yaw
