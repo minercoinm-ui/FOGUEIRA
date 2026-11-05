@@ -11,11 +11,10 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@colyseus/core": "^0.15.16",
+    "@colyseus/core": "^0.15.0",
     "@colyseus/schema": "^2.0.32",
-    "@colyseus/tools": "^0.15.16",
-    "@colyseus/ws-transport": "^0.15.16",
-    "colyseus": "^0.15.16",
+    "@colyseus/ws-transport": "^0.15.0",
+    "colyseus": "^0.15.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2"

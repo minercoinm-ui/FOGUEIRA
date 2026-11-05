@@ -286,6 +286,12 @@ export class FarmWorld {
 
     if (e.key === 'Shift') this.keys['shift'] = true;
 
+    // Se estiver sentado e pressionar teclas de movimento (WASD, setas, espaço), levanta automaticamente
+    if (this.isSitting && ['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(key)) {
+      this.toggleSitInteract();
+      return;
+    }
+
     // Hotkeys
     if (key === 'e') {
       this.toggleSitInteract();
@@ -311,9 +317,18 @@ export class FarmWorld {
 
   public toggleSitInteract(): void {
     if (this.isSitting) {
-      // Stand up
+      // Stand up: desativa estado de sentar e projeta o boneco suavemente para frente,
+      // desvencilhando-o totalmente da caixa de colisão do banco
       this.isSitting = false;
       this.player.setAction('idle');
+
+      // Projeta o personagem para fora do banco na direção que ele estava olhando
+      const exitDist = 1.0;
+      const exitX = this.playerPos.x + Math.sin(this.playerHeading) * exitDist;
+      const exitZ = this.playerPos.z + Math.cos(this.playerHeading) * exitDist;
+      this.playerPos.set(exitX, 0, exitZ);
+      this.player.group.position.copy(this.playerPos);
+
       if (this.onSittingStateChange) this.onSittingStateChange(false);
       socketManager.sendSitInteract(false);
       socketManager.sendPlayerTransform(
@@ -329,7 +344,7 @@ export class FarmWorld {
     }
 
     if (this.nearbySitSpot) {
-      // Sit on the nearby bench / spot
+      // Senta no banco ou toco próximo
       this.isSitting = true;
       const [sx, sy, sz] = this.nearbySitSpot.position;
       this.playerPos.set(sx, sy, sz);
@@ -480,8 +495,27 @@ export class FarmWorld {
   }
 
   private updatePlayerMovement(delta: number): boolean {
-    if (this.gameState !== 'PLAYING' || this.isSitting) {
+    if (this.gameState !== 'PLAYING') {
       return false;
+    }
+
+    // Se estiver sentado, verifica se alguma tecla de movimento foi acionada
+    if (this.isSitting) {
+      const anyMoveKey =
+        this.keys['w'] ||
+        this.keys['arrowup'] ||
+        this.keys['s'] ||
+        this.keys['arrowdown'] ||
+        this.keys['a'] ||
+        this.keys['arrowleft'] ||
+        this.keys['d'] ||
+        this.keys['arrowright'];
+
+      if (anyMoveKey) {
+        this.toggleSitInteract();
+      } else {
+        return false;
+      }
     }
 
     let forward = 0;
@@ -525,6 +559,14 @@ export class FarmWorld {
     let allowedZ = newZ;
 
     for (const c of this.colliders) {
+      // Verifica se a posição atual já estava em sobreposição com o colisor
+      const curInsideX =
+        this.playerPos.x + playerRadius > c.minX &&
+        this.playerPos.x - playerRadius < c.maxX;
+      const curInsideZ =
+        this.playerPos.z + playerRadius > c.minZ &&
+        this.playerPos.z - playerRadius < c.maxZ;
+
       // Check X motion
       if (
         allowedX + playerRadius > c.minX &&
@@ -532,7 +574,10 @@ export class FarmWorld {
         this.playerPos.z + playerRadius > c.minZ &&
         this.playerPos.z - playerRadius < c.maxZ
       ) {
-        allowedX = this.playerPos.x; // Block X
+        // Se já estava dentro do colisor (ex: acabou de levantar do banco), permite afastar-se
+        if (!curInsideX || (curInsideX && curInsideZ && Math.abs(allowedX - (c.minX + c.maxX) / 2) < Math.abs(this.playerPos.x - (c.minX + c.maxX) / 2))) {
+          allowedX = this.playerPos.x; // Block X se estiver adentrando
+        }
       }
 
       // Check Z motion
@@ -542,7 +587,9 @@ export class FarmWorld {
         allowedZ + playerRadius > c.minZ &&
         allowedZ - playerRadius < c.maxZ
       ) {
-        allowedZ = this.playerPos.z; // Block Z
+        if (!curInsideZ || (curInsideX && curInsideZ && Math.abs(allowedZ - (c.minZ + c.maxZ) / 2) < Math.abs(this.playerPos.z - (c.minZ + c.maxZ) / 2))) {
+          allowedZ = this.playerPos.z; // Block Z se estiver adentrando
+        }
       }
     }
 

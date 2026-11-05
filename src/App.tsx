@@ -14,7 +14,7 @@ import {
 } from './types/game';
 import { WORLD_LOCATIONS, CHARACTER_PRESETS } from './game/constants';
 import { soundEngine } from './audio/SoundEngine';
-import { socketManager } from './server/SocketManager';
+import { socketManager, ConnectionStatus } from './server/SocketManager';
 
 const DEFAULT_CUSTOMIZATION: PlayerCustomization = {
   name: CHARACTER_PRESETS[0].name,
@@ -56,6 +56,12 @@ export default function App() {
   const [isAuditOpen, setIsAuditOpen] = useState<boolean>(false);
   const [isMuted, setIsMuted] = useState<boolean>(false);
 
+  // Multiplayer connection state
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>(socketManager.status);
+  const [connectionError, setConnectionError] = useState<string | null>(socketManager.errorMessage);
+  const [latencyMs, setLatencyMs] = useState<number>(socketManager.latencyMs);
+  const [remotePlayersCount, setRemotePlayersCount] = useState<number>(socketManager.remotePlayers.size);
+
   // Chat message history
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
@@ -90,8 +96,25 @@ export default function App() {
       remote?.showMessage(msg.text);
     });
 
+    const unsubStatus = socketManager.onStatusChange((status, errorMsg, latency) => {
+      setConnectionStatus(status);
+      setConnectionError(errorMsg ?? null);
+      if (typeof latency === 'number') setLatencyMs(latency);
+    });
+
+    const unsubJoin = socketManager.onPlayerJoin(() => {
+      setRemotePlayersCount(socketManager.remotePlayers.size);
+    });
+
+    const unsubLeave = socketManager.onPlayerLeave(() => {
+      setRemotePlayersCount(socketManager.remotePlayers.size);
+    });
+
     return () => {
       unsubChat();
+      unsubStatus();
+      unsubJoin();
+      unsubLeave();
       socketManager.disconnect();
       world.destroy();
       worldRef.current = null;
@@ -128,6 +151,18 @@ export default function App() {
         isSystem: true,
       },
     ]);
+  };
+
+  const handleRetryConnection = async () => {
+    if (worldRef.current) {
+      return socketManager.connect(customization, {
+        x: worldRef.current.playerPos.x,
+        y: worldRef.current.playerPos.y,
+        z: worldRef.current.playerPos.z,
+        rotationY: Math.PI,
+      });
+    }
+    return socketManager.retryConnect();
   };
 
   // Preview character customization changes in Title mode
@@ -219,6 +254,8 @@ export default function App() {
           initialCustomization={customization}
           onCustomizationPreview={handleCustomizationPreview}
           onOpenAuditModal={() => setIsAuditOpen(true)}
+          connectionStatus={connectionStatus}
+          serverUrl={socketManager.getServerUrl()}
         />
       )}
 
@@ -239,6 +276,12 @@ export default function App() {
           onSendMessage={handleSendMessage}
           settings={settings}
           onCycleTimeOfDay={handleCycleTimeOfDay}
+          connectionStatus={connectionStatus}
+          connectionError={connectionError}
+          latencyMs={latencyMs}
+          onlinePlayersCount={1 + remotePlayersCount}
+          onRetryConnection={handleRetryConnection}
+          serverUrl={socketManager.getServerUrl()}
         />
       )}
 
@@ -256,6 +299,10 @@ export default function App() {
       <MultiplayerAuditModal
         isOpen={isAuditOpen}
         onClose={() => setIsAuditOpen(false)}
+        connectionStatus={connectionStatus}
+        connectionError={connectionError}
+        latencyMs={latencyMs}
+        onRetryConnection={handleRetryConnection}
       />
     </div>
   );

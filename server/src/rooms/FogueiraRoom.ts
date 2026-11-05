@@ -46,10 +46,9 @@ interface CustomizationMessage {
 }
 
 export class FogueiraRoom extends Room<FogueiraState> {
-  public maxClients = 50;
-  public autoDispose = false;
-
   onCreate(options: Record<string, unknown>): void {
+    this.maxClients = 50;
+    this.autoDispose = false;
     console.log('[FogueiraRoom] Sala criada com opções:', options);
     this.setState(new FogueiraState());
 

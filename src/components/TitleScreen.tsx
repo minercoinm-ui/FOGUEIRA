@@ -3,11 +3,15 @@ import { PlayerCustomization, CharacterPreset, Gender, HairStyle, ShirtStyle, Pa
 import { CHARACTER_PRESETS } from '../game/constants';
 import { Flame, Compass, User, Sparkles, Check, ChevronRight, ShieldAlert } from 'lucide-react';
 
+import { ConnectionStatus } from '../server/SocketManager';
+
 interface TitleScreenProps {
   onEnter: (customization: PlayerCustomization) => void;
   initialCustomization: PlayerCustomization;
   onCustomizationPreview: (customization: PlayerCustomization) => void;
   onOpenAuditModal?: () => void;
+  connectionStatus?: ConnectionStatus;
+  serverUrl?: string;
 }
 
 const SKIN_TONES = [
@@ -64,6 +68,8 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
   initialCustomization,
   onCustomizationPreview,
   onOpenAuditModal,
+  connectionStatus = 'disconnected',
+  serverUrl = '',
 }) => {
   const [customization, setCustomization] = useState<PlayerCustomization>(initialCustomization);
   const [selectedPresetId, setSelectedPresetId] = useState<string>(
@@ -119,15 +125,38 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
           </div>
         </div>
 
-        {/* Server & Network Status Badge (Honest Audit) */}
+        {/* Server & Network Status Badge */}
         <div className="pointer-events-auto flex items-center space-x-2">
           <button
             onClick={onOpenAuditModal}
-            title="Clique para ver o diagnóstico do servidor multiplayer"
-            className="bg-stone-900/90 hover:bg-stone-800/90 border border-amber-500/30 px-3.5 py-1.5 rounded-full text-xs font-medium text-amber-200/90 flex items-center space-x-2 shadow-md cursor-pointer transition-colors"
+            title={`Clique para ver detalhes do servidor multiplayer (${serverUrl || 'Railway'})`}
+            className={`px-3.5 py-1.5 rounded-full text-xs font-medium flex items-center space-x-2 shadow-md cursor-pointer transition-colors border ${
+              connectionStatus === 'connected'
+                ? 'bg-emerald-950/80 border-emerald-500/40 text-emerald-200 hover:bg-emerald-900/80'
+                : connectionStatus === 'connecting' || connectionStatus === 'reconnecting'
+                ? 'bg-stone-900/90 border-amber-500/40 text-amber-300 hover:bg-stone-800'
+                : connectionStatus === 'error'
+                ? 'bg-red-950/80 border-red-500/50 text-red-200 hover:bg-red-900/80'
+                : 'bg-stone-900/90 hover:bg-stone-800/90 border-amber-500/30 text-amber-200/90'
+            }`}
           >
-            <span className="w-2 h-2 rounded-full bg-amber-400"></span>
-            <span>Sessão Local (Servidor Offline)</span>
+            <span
+              className={`w-2 h-2 rounded-full ${
+                connectionStatus === 'connected'
+                  ? 'bg-emerald-400 animate-pulse'
+                  : connectionStatus === 'connecting' || connectionStatus === 'reconnecting'
+                  ? 'bg-amber-400 animate-ping'
+                  : connectionStatus === 'error'
+                  ? 'bg-red-500'
+                  : 'bg-amber-400'
+              }`}
+            ></span>
+            <span>
+              {connectionStatus === 'connected' && 'Servidor Railway (Online)'}
+              {(connectionStatus === 'connecting' || connectionStatus === 'reconnecting') && 'Conectando ao Servidor...'}
+              {connectionStatus === 'error' && 'Servidor Offline (Clique p/ detalhes)'}
+              {connectionStatus === 'disconnected' && 'Servidor: Railway Produção'}
+            </span>
             <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
           </button>
         </div>

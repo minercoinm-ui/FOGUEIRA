@@ -26,16 +26,54 @@ export type PlayerJoinCallback = (player: PlayerNetworkState) => void;
 export type PlayerLeaveCallback = (sessionId: string) => void;
 export type PlayerUpdateCallback = (sessionId: string, state: Partial<PlayerNetworkState>) => void;
 export type ChatMessageCallback = (msg: ChatMessage) => void;
-export type StatusChangeCallback = (status: ConnectionStatus, errorMsg?: string) => void;
+export type StatusChangeCallback = (status: ConnectionStatus, errorMsg?: string, latency?: number) => void;
+
+/**
+ * Normalizes any server address (with or without protocol, HTTP/HTTPS or WS/WSS)
+ * into a valid Colyseus WebSocket URI.
+ */
+export function normalizeColyseusUrl(rawUrl?: string): string {
+  const DEFAULT_PROD_URL = 'wss://fogueira-production.up.railway.app';
+
+  if (!rawUrl || typeof rawUrl !== 'string') {
+    return DEFAULT_PROD_URL;
+  }
+
+  let clean = rawUrl.trim();
+  // Strip trailing slashes
+  clean = clean.replace(/\/+$/, '');
+
+  if (!clean) {
+    return DEFAULT_PROD_URL;
+  }
+
+  // Convert http(s) to ws(s)
+  if (clean.startsWith('https://')) {
+    clean = clean.replace(/^https:\/\//, 'wss://');
+  } else if (clean.startsWith('http://')) {
+    clean = clean.replace(/^http:\/\//, 'ws://');
+  } else if (!clean.startsWith('ws://') && !clean.startsWith('wss://')) {
+    // Bare hostname provided (e.g. "fogueira-production.up.railway.app")
+    if (clean.includes('localhost') || clean.includes('127.0.0.1')) {
+      clean = `ws://${clean}`;
+    } else {
+      clean = `wss://${clean}`;
+    }
+  }
+
+  return clean;
+}
 
 export class SocketManager {
   private client: Client | null = null;
   private room: Room | null = null;
   private serverUrl: string;
   private roomName: string = 'fogueira_room';
+
   public status: ConnectionStatus = 'disconnected';
   public sessionId: string | null = null;
   public errorMessage: string | null = null;
+  public latencyMs: number = 0;
 
   // Remote players registry: sessionId -> PlayerNetworkState
   public remotePlayers: Map<string, PlayerNetworkState> = new Map();
@@ -51,27 +89,38 @@ export class SocketManager {
   private lastSentTime = 0;
   private sendIntervalMs = 50; // 20 Hz
 
+  // Ping interval
+  private pingIntervalId: number | null = null;
+
+  // Last connection parameters for reconnect
+  private lastCustomization: PlayerCustomization | null = null;
+  private lastInitialPos: { x: number; y: number; z: number; rotationY: number } | null = null;
+
   constructor(serverUrl?: string) {
-    // Determine Colyseus server endpoint:
-    // 1. Explicit argument
-    // 2. Environment variable VITE_COLYSEUS_URL
-    // 3. Fallback to default Colyseus port or current host with ws/wss protocol
-    const envUrl = (import.meta as unknown as { env: Record<string, string> }).env?.VITE_COLYSEUS_URL;
+    const envUrl = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_COLYSEUS_URL;
 
     if (serverUrl) {
-      this.serverUrl = serverUrl;
+      this.serverUrl = normalizeColyseusUrl(serverUrl);
     } else if (envUrl) {
-      this.serverUrl = envUrl;
-    } else if (typeof window !== 'undefined') {
-      const isHttps = window.location.protocol === 'https:';
-      const wsProtocol = isHttps ? 'wss://' : 'ws://';
-      // In development, default to standard Colyseus dev port 2567 or the current host
-      const host = window.location.hostname;
-      const port = window.location.port ? `:${window.location.port}` : '';
-      this.serverUrl = `${wsProtocol}${host}${port}`;
+      this.serverUrl = normalizeColyseusUrl(envUrl);
     } else {
-      this.serverUrl = 'ws://localhost:2567';
+      this.serverUrl = normalizeColyseusUrl();
     }
+
+    console.log(`[SocketManager] Configurado para conectar em: ${this.serverUrl}`);
+  }
+
+  public getServerUrl(): string {
+    return this.serverUrl;
+  }
+
+  public setServerUrl(newUrl: string): void {
+    this.serverUrl = normalizeColyseusUrl(newUrl);
+    console.log(`[SocketManager] Servidor alterado para: ${this.serverUrl}`);
+  }
+
+  public getRoomName(): string {
+    return this.roomName;
   }
 
   /**
@@ -84,6 +133,9 @@ export class SocketManager {
     if (this.status === 'connecting' || this.status === 'connected') {
       return true;
     }
+
+    this.lastCustomization = customization;
+    this.lastInitialPos = initialPos;
 
     this.setStatus('connecting');
     this.errorMessage = null;
@@ -100,20 +152,36 @@ export class SocketManager {
         rotationY: initialPos.rotationY,
       };
 
+      console.log(`[SocketManager] Conectando à sala "${this.roomName}" em ${this.serverUrl}...`);
+
       // Connect and joinOrCreate room
       this.room = await this.client.joinOrCreate(this.roomName, joinOptions);
       this.sessionId = this.room.sessionId;
       this.setStatus('connected');
+      console.log(`[SocketManager] Conexão estabelecida com sucesso! SessionID: ${this.sessionId}`);
 
       this.setupRoomListeners();
+      this.startPingLoop();
       return true;
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       this.errorMessage = message;
       this.setStatus('error', message);
-      console.warn(`[SocketManager] Colyseus connection failed to ${this.serverUrl}: ${message}`);
+      console.warn(`[SocketManager] Erro ao conectar com servidor Colyseus (${this.serverUrl}): ${message}`);
       return false;
     }
+  }
+
+  /**
+   * Tenta reconectar usando os últimos parâmetros salvos.
+   */
+  public async retryConnect(): Promise<boolean> {
+    if (!this.lastCustomization || !this.lastInitialPos) {
+      return false;
+    }
+    this.disconnect();
+    this.setStatus('reconnecting');
+    return this.connect(this.lastCustomization, this.lastInitialPos);
   }
 
   /**
@@ -124,27 +192,38 @@ export class SocketManager {
 
     // Room connection state
     this.room.onLeave((code) => {
-      this.setStatus('disconnected', `Desconectado da sala (código ${code})`);
+      const msg = `Desconectado da sala multiplayer (código ${code})`;
+      console.warn(`[SocketManager] ${msg}`);
+      this.stopPingLoop();
+      this.setStatus('disconnected', msg);
       this.clearRemotePlayers();
     });
 
     this.room.onError((code, message) => {
-      this.setStatus('error', `Erro na sala Colyseus: ${message} (${code})`);
+      const msg = `Erro no servidor Colyseus: ${message} (código ${code})`;
+      console.error(`[SocketManager] ${msg}`);
+      this.setStatus('error', msg);
     });
 
-    // 1. Schema or state change: listen for player add/remove/change
+    // 1. Schema listeners: listen for player add/remove directly on state.players MapSchema
+    if (this.room.state) {
+      this.setupStateSchemaListeners(this.room.state);
+    }
+
+    // 2. Fallback / supplementary onStateChange listener
     this.room.onStateChange((state: unknown) => {
-      const typedState = state as { players?: Record<string, unknown> };
+      const typedState = state as {
+        players?: { forEach?: (cb: (player: unknown, sessionId: string) => void) => void } | Record<string, unknown>;
+      };
       if (!typedState?.players) return;
 
       const currentIds = new Set<string>();
 
-      // Iterate players in room state
-      Object.entries(typedState.players).forEach(([sessionId, pData]) => {
+      const handlePlayerRecord = (sessionId: string, pData: unknown) => {
         if (sessionId === this.sessionId) return; // Skip local player
         currentIds.add(sessionId);
 
-        const data = pData as Partial<PlayerNetworkState>;
+        const data = (pData || {}) as Partial<PlayerNetworkState>;
         if (!this.remotePlayers.has(sessionId)) {
           // New remote player joined
           const newPlayer: PlayerNetworkState = {
@@ -164,8 +243,8 @@ export class SocketManager {
             },
             x: data.x ?? 0,
             y: data.y ?? 0,
-            z: data.z ?? 0,
-            rotationY: data.rotationY ?? 0,
+            z: data.z ?? 4.8,
+            rotationY: data.rotationY ?? Math.PI,
             action: (data.action as AvatarAction) ?? 'idle',
             isSitting: Boolean(data.isSitting),
             sitSpotId: data.sitSpotId,
@@ -177,18 +256,52 @@ export class SocketManager {
         } else {
           // Existing remote player updated
           const existing = this.remotePlayers.get(sessionId)!;
-          if (data.x !== undefined) existing.x = data.x;
-          if (data.y !== undefined) existing.y = data.y;
-          if (data.z !== undefined) existing.z = data.z;
-          if (data.rotationY !== undefined) existing.rotationY = data.rotationY;
-          if (data.action !== undefined) existing.action = data.action as AvatarAction;
-          if (data.isSitting !== undefined) existing.isSitting = data.isSitting;
-          if (data.sitSpotId !== undefined) existing.sitSpotId = data.sitSpotId;
-          existing.lastUpdated = Date.now();
+          let changed = false;
 
-          this.notifyPlayerUpdate(sessionId, existing);
+          if (data.x !== undefined && data.x !== existing.x) {
+            existing.x = data.x;
+            changed = true;
+          }
+          if (data.y !== undefined && data.y !== existing.y) {
+            existing.y = data.y;
+            changed = true;
+          }
+          if (data.z !== undefined && data.z !== existing.z) {
+            existing.z = data.z;
+            changed = true;
+          }
+          if (data.rotationY !== undefined && data.rotationY !== existing.rotationY) {
+            existing.rotationY = data.rotationY;
+            changed = true;
+          }
+          if (data.action !== undefined && data.action !== existing.action) {
+            existing.action = data.action as AvatarAction;
+            changed = true;
+          }
+          if (data.isSitting !== undefined && data.isSitting !== existing.isSitting) {
+            existing.isSitting = data.isSitting;
+            changed = true;
+          }
+          if (data.sitSpotId !== undefined) {
+            existing.sitSpotId = data.sitSpotId;
+          }
+
+          if (changed) {
+            existing.lastUpdated = Date.now();
+            this.notifyPlayerUpdate(sessionId, existing);
+          }
         }
-      });
+      };
+
+      if (typeof typedState.players.forEach === 'function') {
+        typedState.players.forEach((pData: unknown, sessionId: string) => {
+          handlePlayerRecord(sessionId, pData);
+        });
+      } else {
+        Object.entries(typedState.players as Record<string, unknown>).forEach(([sessionId, pData]) => {
+          handlePlayerRecord(sessionId, pData);
+        });
+      }
 
       // Remove players who left
       for (const id of Array.from(this.remotePlayers.keys())) {
@@ -199,7 +312,7 @@ export class SocketManager {
       }
     });
 
-    // 2. Direct message handlers for discrete events
+    // 3. Direct message handlers for discrete events
     // Chat message broadcast
     this.room.onMessage('chat', (message: ChatMessage) => {
       this.notifyChatMessage(message);
@@ -216,6 +329,7 @@ export class SocketManager {
           if (data.rotationY !== undefined) p.rotationY = data.rotationY;
           if (data.action !== undefined) p.action = data.action;
           if (data.isSitting !== undefined) p.isSitting = data.isSitting;
+          if (data.sitSpotId !== undefined) p.sitSpotId = data.sitSpotId;
           p.lastUpdated = Date.now();
           this.notifyPlayerUpdate(data.sessionId, p);
         }
@@ -228,10 +342,89 @@ export class SocketManager {
         const p = this.remotePlayers.get(data.sessionId);
         if (p) {
           p.action = data.action;
+          p.lastUpdated = Date.now();
           this.notifyPlayerUpdate(data.sessionId, { action: data.action });
         }
       }
     });
+
+    // Pong response for latency measurement
+    this.room.onMessage('pong', (data: { clientTime?: number; serverTime?: number }) => {
+      if (data?.clientTime) {
+        this.latencyMs = Math.max(1, Math.round(performance.now() - data.clientTime));
+        this.notifyStatusChange();
+      }
+    });
+  }
+
+  private setupStateSchemaListeners(state: unknown): void {
+    const s = state as {
+      players?: {
+        onAdd?: (cb: (player: unknown, sessionId: string) => void) => void;
+        onRemove?: (cb: (player: unknown, sessionId: string) => void) => void;
+      };
+    };
+
+    if (s.players && typeof s.players.onAdd === 'function') {
+      s.players.onAdd((playerData, sessionId) => {
+        if (sessionId === this.sessionId) return;
+        const p = playerData as Partial<PlayerNetworkState>;
+        const newPlayer: PlayerNetworkState = {
+          sessionId,
+          name: p.name || 'Viajante',
+          customization: p.customization || {
+            name: p.name || 'Viajante',
+            gender: 'male',
+            skinTone: '#d8a679',
+            hairStyle: 'short_part',
+            hairColor: '#362312',
+            shirtStyle: 'flannel_red',
+            shirtColor: '#b83a2b',
+            pantsStyle: 'jeans_classic',
+            pantsColor: '#2b3f60',
+            hatType: 'straw',
+          },
+          x: p.x ?? 0,
+          y: p.y ?? 0,
+          z: p.z ?? 4.8,
+          rotationY: p.rotationY ?? Math.PI,
+          action: (p.action as AvatarAction) ?? 'idle',
+          isSitting: Boolean(p.isSitting),
+          sitSpotId: p.sitSpotId,
+          lastUpdated: Date.now(),
+        };
+        this.remotePlayers.set(sessionId, newPlayer);
+        this.notifyPlayerJoin(newPlayer);
+      });
+    }
+
+    if (s.players && typeof s.players.onRemove === 'function') {
+      s.players.onRemove((_, sessionId) => {
+        if (sessionId === this.sessionId) return;
+        this.remotePlayers.delete(sessionId);
+        this.notifyPlayerLeave(sessionId);
+      });
+    }
+  }
+
+  private startPingLoop(): void {
+    this.stopPingLoop();
+    this.pingIntervalId = window.setInterval(() => {
+      if (this.room && this.status === 'connected') {
+        try {
+          this.room.send('ping', { t: performance.now() });
+        } catch {
+          // ignore
+        }
+      }
+    }, 4000);
+  }
+
+  private stopPingLoop(): void {
+    if (this.pingIntervalId !== null) {
+      window.clearInterval(this.pingIntervalId);
+      this.pingIntervalId = null;
+    }
   }
 
   /**
@@ -264,7 +457,7 @@ export class SocketManager {
         isSitting,
       });
     } catch (e) {
-      console.warn('[SocketManager] Failed to send player transform:', e);
+      console.warn('[SocketManager] Falha ao enviar posição do jogador:', e);
     }
   }
 
@@ -281,7 +474,7 @@ export class SocketManager {
         timestamp: Date.now(),
       });
     } catch (e) {
-      console.warn('[SocketManager] Failed to send chat message:', e);
+      console.warn('[SocketManager] Falha ao enviar mensagem de chat:', e);
     }
   }
 
@@ -294,7 +487,7 @@ export class SocketManager {
     try {
       this.room.send('emote', { action });
     } catch (e) {
-      console.warn('[SocketManager] Failed to send emote:', e);
+      console.warn('[SocketManager] Falha ao enviar gesto:', e);
     }
   }
 
@@ -307,7 +500,7 @@ export class SocketManager {
     try {
       this.room.send('sit', { isSitting, sitSpotId });
     } catch (e) {
-      console.warn('[SocketManager] Failed to send sit interact:', e);
+      console.warn('[SocketManager] Falha ao enviar sentar/levantar:', e);
     }
   }
 
@@ -320,7 +513,7 @@ export class SocketManager {
     try {
       this.room.send('update_profile', { customization });
     } catch (e) {
-      console.warn('[SocketManager] Failed to send profile update:', e);
+      console.warn('[SocketManager] Falha ao enviar atualização de perfil:', e);
     }
   }
 
@@ -328,6 +521,7 @@ export class SocketManager {
    * Disconnects gracefully from the Colyseus server.
    */
   public disconnect(): void {
+    this.stopPingLoop();
     if (this.room) {
       try {
         this.room.leave();
@@ -366,14 +560,18 @@ export class SocketManager {
   public onStatusChange(cb: StatusChangeCallback): () => void {
     this.onStatusChangeCallbacks.add(cb);
     // Immediately trigger with current status
-    cb(this.status, this.errorMessage ?? undefined);
+    cb(this.status, this.errorMessage ?? undefined, this.latencyMs);
     return () => this.onStatusChangeCallbacks.delete(cb);
   }
 
   private setStatus(status: ConnectionStatus, errorMsg?: string): void {
     this.status = status;
     if (errorMsg) this.errorMessage = errorMsg;
-    this.onStatusChangeCallbacks.forEach((cb) => cb(status, errorMsg));
+    this.notifyStatusChange();
+  }
+
+  private notifyStatusChange(): void {
+    this.onStatusChangeCallbacks.forEach((cb) => cb(this.status, this.errorMessage ?? undefined, this.latencyMs));
   }
 
   private clearRemotePlayers(): void {

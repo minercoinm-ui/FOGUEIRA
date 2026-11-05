@@ -77,7 +77,7 @@ gameServer.listen(port, host).then(() => {
   console.log(`🪵 Sala registrada: fogueira_room`);
   console.log('🚀 Pronto para produção na Railway!');
   console.log('====================================================');
-}).catch((err) => {
+}).catch((err: unknown) => {
   console.error('[FOGUEIRA Server] Falha ao iniciar servidor:', err);
   process.exit(1);
 });

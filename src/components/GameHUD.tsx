@@ -19,6 +19,8 @@ import {
   Moon,
 } from 'lucide-react';
 
+import { ConnectionStatus } from '../server/SocketManager';
+
 interface GameHUDProps {
   currentLocation: WorldLocation;
   nearbySitSpot: SitSpot | null;
@@ -34,6 +36,12 @@ interface GameHUDProps {
   onSendMessage: (text: string) => void;
   settings: GameSettings;
   onCycleTimeOfDay: () => void;
+  connectionStatus?: ConnectionStatus;
+  connectionError?: string | null;
+  latencyMs?: number;
+  onlinePlayersCount?: number;
+  onRetryConnection?: () => void;
+  serverUrl?: string;
 }
 
 export const GameHUD: React.FC<GameHUDProps> = ({
@@ -51,6 +59,12 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   onSendMessage,
   settings,
   onCycleTimeOfDay,
+  connectionStatus = 'disconnected',
+  connectionError,
+  latencyMs = 0,
+  onlinePlayersCount = 1,
+  onRetryConnection,
+  serverUrl = '',
 }) => {
   const [isMicActive, setIsMicActive] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
@@ -88,19 +102,78 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             </div>
           </div>
 
-          {/* Player Count & Session Badge (Clickable for technical audit) */}
-          <button
-            onClick={onOpenAuditModal}
-            title="Clique para auditar a conexão com o servidor multiplayer"
-            className="flex items-center space-x-2 bg-stone-900/85 hover:bg-stone-800/90 border border-stone-800 hover:border-amber-500/40 px-3 py-1 rounded-full text-[11px] text-stone-300 w-fit cursor-pointer transition-colors shadow-md"
-          >
-            <span className="w-2 h-2 rounded-full bg-amber-400"></span>
-            <Users className="w-3 h-3 text-stone-400" />
-            <span>1 Jogador</span>
-            <span className="text-amber-300/80 text-[10px] underline underline-offset-2">
-              (Sessão Local · Sem Servidor)
-            </span>
-          </button>
+          {/* Real Multiplayer Status & Player Counter */}
+          <div className="flex items-center space-x-1.5 flex-wrap gap-y-1">
+            <button
+              onClick={onOpenAuditModal}
+              title={`Clique para detalhes da conexão multiplayer (${serverUrl || 'Railway'})`}
+              className={`flex items-center space-x-2 px-3 py-1 rounded-full text-[11px] border cursor-pointer transition-colors shadow-md ${
+                connectionStatus === 'connected'
+                  ? 'bg-stone-900/90 border-emerald-500/40 text-emerald-300 hover:bg-stone-800'
+                  : connectionStatus === 'connecting' || connectionStatus === 'reconnecting'
+                  ? 'bg-stone-900/90 border-amber-500/40 text-amber-300 hover:bg-stone-800'
+                  : connectionStatus === 'error'
+                  ? 'bg-red-950/80 border-red-500/60 text-red-200 hover:bg-red-900/80'
+                  : 'bg-stone-900/85 border-stone-800 text-stone-400 hover:bg-stone-800'
+              }`}
+            >
+              {/* Status pulse dot */}
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  connectionStatus === 'connected'
+                    ? 'bg-emerald-400 animate-pulse'
+                    : connectionStatus === 'connecting' || connectionStatus === 'reconnecting'
+                    ? 'bg-amber-400 animate-ping'
+                    : connectionStatus === 'error'
+                    ? 'bg-red-500'
+                    : 'bg-stone-500'
+                }`}
+              ></span>
+
+              <Users className="w-3 h-3" />
+              <span className="font-medium">
+                {onlinePlayersCount} {onlinePlayersCount === 1 ? 'Jogador' : 'Jogadores'}
+              </span>
+
+              <span className="text-[10px] opacity-80 underline underline-offset-2">
+                {connectionStatus === 'connected' && '(Servidor Railway)'}
+                {(connectionStatus === 'connecting' || connectionStatus === 'reconnecting') && '(Conectando...)'}
+                {connectionStatus === 'error' && '(Erro de Conexão)'}
+                {connectionStatus === 'disconnected' && '(Desconectado)'}
+              </span>
+
+              {connectionStatus === 'connected' && latencyMs > 0 && (
+                <span className="text-[10px] bg-emerald-950/60 text-emerald-400 px-1.5 py-0.2 rounded-md font-mono">
+                  {latencyMs}ms
+                </span>
+              )}
+            </button>
+
+            {/* Reconnect button on error */}
+            {connectionStatus === 'error' && onRetryConnection && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRetryConnection();
+                }}
+                className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-500 hover:bg-amber-400 text-stone-950 transition-colors shadow-sm cursor-pointer"
+                title="Tentar reconectar com o servidor multiplayer na Railway"
+              >
+                Reconectar
+              </button>
+            )}
+          </div>
+
+          {/* Real error banner warning if connection failed */}
+          {connectionStatus === 'error' && connectionError && (
+            <div className="p-2 rounded-xl bg-red-950/90 border border-red-500/50 text-red-200 text-[10px] max-w-sm flex items-start space-x-2 shadow-lg animate-fade-in pointer-events-auto">
+              <span className="text-red-400 font-bold shrink-0">⚠️</span>
+              <div className="leading-tight">
+                <span className="font-semibold block text-red-100">Falha ao conectar ao servidor:</span>
+                <span className="text-red-300 break-all">{connectionError}</span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Top-Right: Mic, Sound & Settings */}
